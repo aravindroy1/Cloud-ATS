@@ -86,7 +86,7 @@ app.storageBlob('resumeBlobTrigger', {
   path: 'resumes/{name}',
   connection: 'AZURE_STORAGE_CONNECTION_STRING',
   handler: async (blob, context) => {
-    const blobName = context.triggerMetadata.name;
+    const blobName = context.triggerMetadata.name; // Unique blobName key (e.g. 1717462000-1234567.pdf)
     context.log(`Processing Blob Trigger Event: "${blobName}" (${blob.length} bytes)`);
 
     try {
@@ -98,9 +98,8 @@ app.storageBlob('resumeBlobTrigger', {
       const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME || 'resumes';
       
       let userId = '';
-      let fileName = blobName;
+      let fileName = blobName; // Default display name to blobName
       let jobDescription = '';
-      let fileUrl = '';
 
       if (connectionString) {
         context.log(`Connecting to Azure Storage to fetch metadata for blob: ${blobName}`);
@@ -116,7 +115,6 @@ app.storageBlob('resumeBlobTrigger', {
         jobDescription = metadata.jobdescription 
           ? Buffer.from(metadata.jobdescription, 'base64').toString('utf8')
           : '';
-        fileUrl = blobClient.url;
       } else {
         context.log('Warning: Storage Connection String missing. Running in local test simulation mode.');
       }
@@ -157,12 +155,8 @@ app.storageBlob('resumeBlobTrigger', {
       context.log(`Auditing resume against job description (JD length: ${jobDescription.length} chars)`);
       const analysis = analyzeResume(extractedText, jobDescription);
 
-      // 5. Update Database Record
-      let resume = await Resume.findOne({ userId, fileName });
-      
-      if (!resume && fileUrl) {
-        resume = await Resume.findOne({ fileUrl });
-      }
+      // 5. Update Database Record matching on unique blobName (Private Access secure match)
+      let resume = await Resume.findOne({ blobName: blobName });
 
       if (resume) {
         resume.atsScore = analysis.atsScore;
@@ -173,14 +167,19 @@ app.storageBlob('resumeBlobTrigger', {
         context.log(`Database record updated successfully. Resume ID: ${resume._id}, Score: ${analysis.atsScore}%`);
       } else {
         context.log('Warning: Placeholder record not found. Creating a new completed resume record.');
-        resume = await Resume.create({
+        const newResume = new Resume({
           userId: new mongoose.Types.ObjectId(userId),
           fileName,
-          fileUrl: fileUrl || `https://local-development-fallback/${blobName}`,
+          blobName,
+          fileUrl: '', // Secure download URL proxy populated below
           status: 'Completed',
           atsScore: analysis.atsScore,
           analysisResults: analysis.analysisResults
         });
+        
+        newResume.fileUrl = `/api/resumes/${newResume._id}/download`;
+        await newResume.save();
+        context.log(`Created new completed resume record. ID: ${newResume._id}`);
       }
 
       // 6. Retrieve User Details and Trigger SMTP Email
@@ -198,8 +197,7 @@ app.storageBlob('resumeBlobTrigger', {
       // Update DB to failed state if possible
       try {
         await connectDb(context);
-        const nameParam = context.triggerMetadata.name;
-        const resumes = await Resume.find({ fileName: nameParam, status: 'Pending' });
+        const resumes = await Resume.find({ blobName: blobName, status: 'Pending' });
         
         for (const resItem of resumes) {
           resItem.status = 'Failed';

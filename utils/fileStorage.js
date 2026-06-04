@@ -28,7 +28,7 @@ const getBlobServiceClient = () => {
  * @param {string} originalName Original name of the file
  * @param {string} mimeType File mime type
  * @param {Object} [metadata] Optional metadata key-value strings to attach (Azure only)
- * @returns {Promise<string>} The URL of the uploaded file
+ * @returns {Promise<{blobName: string, url: string}>} The blob name and URL of the uploaded file
  */
 const uploadFile = async (fileBuffer, originalName, mimeType, metadata = {}) => {
   const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME || 'resumes';
@@ -55,7 +55,10 @@ const uploadFile = async (fileBuffer, originalName, mimeType, metadata = {}) => 
       });
 
       console.log(`Uploaded to Azure successfully: ${blockBlobClient.url}`);
-      return blockBlobClient.url;
+      return {
+        blobName: uniqueName,
+        url: blockBlobClient.url
+      };
     } catch (error) {
       console.error('Azure Upload Error, falling back to local storage:', error.message);
       // Fall through to local storage if Azure fails
@@ -73,19 +76,23 @@ const uploadFile = async (fileBuffer, originalName, mimeType, metadata = {}) => 
   fs.writeFileSync(localFilePath, fileBuffer);
 
   // Return a relative URL that the express app serves statically
-  return `/uploads/${uniqueName}`;
+  return {
+    blobName: uniqueName,
+    url: `/uploads/${uniqueName}`
+  };
 };
 
 /**
- * Deletes a file from Azure Blob Storage or local storage based on the URL.
- * @param {string} fileUrl The URL of the file to delete
+ * Deletes a file from Azure Blob Storage or local storage.
+ * @param {string} fileUrl The URL stored in the database
+ * @param {string} [blobName] The unique name of the blob file
  */
-const deleteFile = async (fileUrl) => {
+const deleteFile = async (fileUrl, blobName = null) => {
   if (!fileUrl) return;
 
   // Local file delete
-  if (fileUrl.startsWith('/uploads/')) {
-    const fileName = fileUrl.replace('/uploads/', '');
+  if (fileUrl.startsWith('/uploads/') || (!isAzureConfigured() && blobName)) {
+    const fileName = blobName || fileUrl.replace('/uploads/', '');
     const filePath = path.join(__dirname, '../public/uploads', fileName);
     try {
       if (fs.existsSync(filePath)) {
@@ -95,7 +102,8 @@ const deleteFile = async (fileUrl) => {
     } catch (error) {
       console.error(`Error deleting local file ${filePath}:`, error.message);
     }
-    return;
+    
+    if (!isAzureConfigured()) return; // Stop here if Azure isn't configured
   }
 
   // Azure blob delete
@@ -105,15 +113,14 @@ const deleteFile = async (fileUrl) => {
       const blobServiceClient = getBlobServiceClient();
       const containerClient = blobServiceClient.getContainerClient(containerName);
       
-      // Extract blob name from URL
-      const urlParts = fileUrl.split('/');
-      const blobName = urlParts[urlParts.length - 1];
+      // Use blobName directly if available, otherwise parse from URL
+      const targetBlobName = blobName || fileUrl.split('/').pop();
 
-      const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+      const blockBlobClient = containerClient.getBlockBlobClient(targetBlobName);
       await blockBlobClient.deleteIfExists();
-      console.log(`Deleted Azure blob: ${blobName}`);
+      console.log(`Deleted Azure blob: ${targetBlobName}`);
     } catch (error) {
-      console.error(`Error deleting Azure blob from ${fileUrl}:`, error.message);
+      console.error(`Error deleting Azure blob from ${fileUrl} (blobName: ${blobName}):`, error.message);
     }
   }
 };
@@ -121,5 +128,6 @@ const deleteFile = async (fileUrl) => {
 module.exports = {
   uploadFile,
   deleteFile,
-  isAzureConfigured
+  isAzureConfigured,
+  getBlobServiceClient
 };

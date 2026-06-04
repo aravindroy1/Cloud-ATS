@@ -10,6 +10,10 @@ const ResumeSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  blobName: {
+    type: String,
+    required: false
+  },
   fileUrl: {
     type: String,
     required: true
