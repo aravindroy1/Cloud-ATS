@@ -1,0 +1,19 @@
+{
+  "name": "cloud-ats-functions",
+  "version": "1.0.0",
+  "description": "Azure Functions Blob Trigger for Cloud-ATS OCR & Analysis",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "dependencies": {
+    "@azure/ai-form-recognizer": "^4.0.0",
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.2.0",
+    "@azure/storage-blob": "^12.23.0",
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.4.1",
+    "nodemailer": "^6.9.13"
+  }
+}

@@ -7,6 +7,7 @@
 let currentUser = null;
 let resumesList = [];
 let selectedFile = null;
+let pollingInterval = null;
 
 // DOM Cache
 const appLoader = document.getElementById('app-loader');
@@ -135,6 +136,7 @@ const checkAuthentication = async () => {
 
 const showGuestView = () => {
   currentUser = null;
+  stopPolling();
   viewDashboard.style.display = 'none';
   userMenu.style.display = 'none';
   viewGuest.style.display = 'grid';
@@ -217,6 +219,7 @@ formRegister.addEventListener('submit', async (e) => {
 
 // Sign Out
 logoutBtn.addEventListener('click', async () => {
+  stopPolling();
   await API.logout();
   showToast('Logged out successfully.');
   showGuestView();
@@ -323,15 +326,20 @@ formUpload.addEventListener('submit', async (e) => {
       progressPercentage.textContent = `${percent}%`;
     });
 
-    showToast('Analysis completed successfully!');
+    showToast(response.message || 'Resume uploaded successfully.');
     clearSelectedFileState();
     jobDescription.value = '';
     
     // Refresh history
     await loadHistory();
     
-    // Show report modal directly for this newly uploaded resume
-    openReportModal(response.resume);
+    // If completed immediately (local mode), open report.
+    // If pending (Azure mode), show toast alert that trigger started.
+    if (response.resume && response.resume.status === 'Completed') {
+      openReportModal(response.resume);
+    } else {
+      showToast('Resume is being analyzed asynchronously. Please wait.', 4000);
+    }
 
   } catch (err) {
     uploadError.textContent = err.message;
@@ -358,6 +366,7 @@ const loadHistory = async () => {
       historyEmpty.style.display = 'flex';
       historyLoading.style.display = 'none';
       updateStats(0, 0, 0);
+      stopPolling();
       return;
     }
 
@@ -374,19 +383,71 @@ const loadHistory = async () => {
     historyLoading.style.display = 'none';
     historyTable.style.display = 'table';
 
+    // Start/Stop polling based on whether there are pending items
+    const hasPending = resumesList.some(r => r.status === 'Pending');
+    if (hasPending) {
+      startPolling();
+    } else {
+      stopPolling();
+    }
+
   } catch (error) {
     console.error('History load error:', error);
     historyLoading.style.display = 'none';
     historyEmpty.style.textContent = 'Failed to load history list.';
     historyEmpty.style.display = 'flex';
+    stopPolling();
+  }
+};
+
+// Polling for updates on Pending items (Asynchronous Azure Architecture)
+const startPolling = () => {
+  if (pollingInterval) return; // Already polling
+
+  console.log('Starting polling for pending items...');
+  pollingInterval = setInterval(async () => {
+    try {
+      const data = await API.getResumesHistory();
+      resumesList = data.resumes;
+
+      // Update statistics
+      calculateAndRenderStats(resumesList);
+
+      // Re-populate rows
+      historyTableBody.innerHTML = '';
+      resumesList.forEach(resume => {
+        const row = createHistoryRow(resume);
+        historyTableBody.appendChild(row);
+      });
+
+      // Stop polling when no items are pending anymore
+      const stillHasPending = resumesList.some(r => r.status === 'Pending');
+      if (!stillHasPending) {
+        console.log('All pending items completed. Stopping polling.');
+        stopPolling();
+        showToast('All resume analysis scans completed!');
+      }
+    } catch (err) {
+      console.warn('History polling failed:', err.message);
+    }
+  }, 4000);
+};
+
+const stopPolling = () => {
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+    console.log('Polling stopped.');
   }
 };
 
 const calculateAndRenderStats = (resumes) => {
+  const completedResumes = resumes.filter(r => r.status === 'Completed');
   const total = resumes.length;
-  const sum = resumes.reduce((acc, curr) => acc + curr.atsScore, 0);
-  const avg = total > 0 ? Math.round(sum / total) : 0;
-  const best = total > 0 ? Math.max(...resumes.map(r => r.atsScore)) : 0;
+  
+  const sum = completedResumes.reduce((acc, curr) => acc + curr.atsScore, 0);
+  const avg = completedResumes.length > 0 ? Math.round(sum / completedResumes.length) : 0;
+  const best = completedResumes.length > 0 ? Math.max(...completedResumes.map(r => r.atsScore)) : 0;
 
   updateStats(total, avg, best);
 };
@@ -407,12 +468,25 @@ const createHistoryRow = (resume) => {
     day: 'numeric'
   });
 
-  // Decide badge class
-  let scoreClass = 'critical';
-  if (resume.atsScore >= 80) {
-    scoreClass = 'excellent';
-  } else if (resume.atsScore >= 60) {
-    scoreClass = 'passing';
+  // Render score badge based on status
+  let scoreBadgeHTML = '';
+  let isActionEnabled = true;
+
+  if (resume.status === 'Pending') {
+    scoreBadgeHTML = `<span class="ats-badge processing"><div class="spinner spinner-sm" style="width:10px; height:10px; border-width:1.5px; border-top-color:var(--primary); margin-right:5px; display:inline-block;"></div>Analyzing...</span>`;
+    isActionEnabled = false;
+  } else if (resume.status === 'Failed') {
+    scoreBadgeHTML = `<span class="ats-badge critical">Failed</span>`;
+    isActionEnabled = true; // Let user click view report to see error alert
+  } else {
+    // Completed status
+    let scoreClass = 'critical';
+    if (resume.atsScore >= 80) {
+      scoreClass = 'excellent';
+    } else if (resume.atsScore >= 60) {
+      scoreClass = 'passing';
+    }
+    scoreBadgeHTML = `<span class="ats-badge ${scoreClass}">${resume.atsScore}%</span>`;
   }
 
   tr.innerHTML = `
@@ -420,21 +494,27 @@ const createHistoryRow = (resume) => {
       <span class="file-icon">📄</span> ${escapeHTML(resume.fileName)}
     </td>
     <td>
-      <span class="ats-badge ${scoreClass}">${resume.atsScore}%</span>
+      ${scoreBadgeHTML}
     </td>
     <td>${formattedDate}</td>
     <td>
       <div class="action-cell">
-        <button class="btn btn-secondary btn-sm view-report-btn">View Report</button>
+        <button class="btn btn-secondary btn-sm view-report-btn" ${!isActionEnabled ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}>View Report</button>
         <button class="btn btn-danger btn-sm delete-resume-btn">&times;</button>
       </div>
     </td>
   `;
 
   // Bind View Report Click
-  tr.querySelector('.view-report-btn').addEventListener('click', () => {
-    openReportModal(resume);
-  });
+  if (isActionEnabled) {
+    tr.querySelector('.view-report-btn').addEventListener('click', () => {
+      if (resume.status === 'Failed') {
+        alert(`Analysis failed for this file:\n${resume.error || 'Unknown serverless execution issue.'}`);
+        return;
+      }
+      openReportModal(resume);
+    });
+  }
 
   // Bind Delete Click
   tr.querySelector('.delete-resume-btn').addEventListener('click', async (e) => {
@@ -486,7 +566,6 @@ const openReportModal = (resume) => {
   modalGaugeText.textContent = score;
   
   // The circle path length is 100 in stroke-dasharray context
-  // Setting the dasharray to '<score>, 100' fills the gauge proportionally
   modalGaugeFill.setAttribute('stroke-dasharray', `${score}, 100`);
 
   // Color stroke based on rating
