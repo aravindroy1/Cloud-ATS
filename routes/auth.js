@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const db = require('../config/db');
 
@@ -27,6 +28,9 @@ const protect = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!');
     
     if (db.isConnected()) {
+      if (!mongoose.isValidObjectId(decoded.id)) {
+        return res.status(401).json({ success: false, message: 'Invalid session token format. Please log in again.' });
+      }
       req.user = await User.findById(decoded.id).select('-password');
     } else {
       // Memory Fallback Search

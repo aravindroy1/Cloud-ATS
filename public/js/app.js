@@ -104,6 +104,21 @@ themeToggle.addEventListener('click', () => {
   localStorage.setItem('theme', newTheme);
 });
 
+// Global Unauthorized Interceptor
+window.addEventListener('auth-unauthorized', async () => {
+  if (currentUser) {
+    currentUser = null;
+    stopPolling();
+    try {
+      await API.logout();
+    } catch (e) {
+      console.warn('Silent logout failed during 401 interception', e);
+    }
+    showToast('Session expired. Please log in again.');
+    showGuestView();
+  }
+});
+
 // Show Toast Notification helper
 const showToast = (message, duration = 3000) => {
   toastMessage.textContent = message;

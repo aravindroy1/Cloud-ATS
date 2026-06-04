@@ -23,6 +23,10 @@ const getHeaders = (contentType = 'application/json') => {
 const handleResponse = async (response) => {
   const data = await response.json();
   if (!response.ok) {
+    if (response.status === 401) {
+      localStorage.removeItem('token');
+      window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+    }
     throw new Error(data.message || 'API request failed');
   }
   return data;
