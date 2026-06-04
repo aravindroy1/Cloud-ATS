@@ -15,7 +15,11 @@ const connectDb = async (context) => {
   }
   const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/resume-analyzer';
   context.log(`Connecting function to MongoDB at: ${mongoUri.replace(/:[^@/]+@/, ':****@')}`);
-  await mongoose.connect(mongoUri);
+  await mongoose.connect(mongoUri, {
+    serverSelectionTimeoutMS: 15000, // give Cosmos DB enough time to handshake
+    tlsAllowInvalidCertificates: true, // bypass local CA certificate trust issues
+    directConnection: true // bypass replica-set host discovery resolution failures
+  });
 };
 
 // Nodemailer SMTP Email Helper

@@ -8,7 +8,9 @@ const connectDB = async () => {
     console.log(`Connecting to MongoDB at: ${connStr.replace(/:[^@/]+@/, ':****@')}`); // hide credentials if present
     
     const conn = await mongoose.connect(connStr, {
-      serverSelectionTimeoutMS: 15000 // give Cosmos DB enough time to handshake
+      serverSelectionTimeoutMS: 15000, // give Cosmos DB enough time to handshake
+      tlsAllowInvalidCertificates: true, // bypass local CA certificate trust issues
+      directConnection: true // bypass replica-set host discovery resolution failures
     });
     
     isDbConnected = true;
