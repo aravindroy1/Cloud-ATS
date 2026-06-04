@@ -243,7 +243,8 @@ router.get('/:id/download', protect, async (req, res) => {
 router.get('/history', protect, async (req, res) => {
   try {
     if (db.isConnected()) {
-      const resumes = await Resume.find({ userId: req.user._id }).sort({ uploadedAt: -1 });
+      const resumes = await Resume.find({ userId: req.user._id });
+      resumes.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
       return res.status(200).json({
         success: true,
         count: resumes.length,
