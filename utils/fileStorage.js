@@ -42,9 +42,7 @@ const uploadFile = async (fileBuffer, originalName, mimeType, metadata = {}) => 
       const containerClient = blobServiceClient.getContainerClient(containerName);
       
       // Ensure the container exists
-      await containerClient.createIfNotExists({
-        access: 'blob'
-      });
+      await containerClient.createIfNotExists();
 
       const blockBlobClient = containerClient.getBlockBlobClient(uniqueName);
       
