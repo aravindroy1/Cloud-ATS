@@ -4,9 +4,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const { connectDB } = require('./config/db');
-
-// Initialize database
-connectDB();
+const { loadSecrets } = require('./config/keyvault');
 
 const app = express();
 
@@ -56,12 +54,33 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 8080;
-const server = app.listen(PORT, () => {
-  console.log(`===================================================`);
-  console.log(` Resume Analyzer Server Running in ${process.env.NODE_ENV || 'development'} mode`);
-  console.log(` Local URL: http://localhost:${PORT}`);
-  console.log(`===================================================`);
-});
+
+// Wrap in async to load secrets first
+const startServer = async () => {
+  try {
+    await loadSecrets();
+    await connectDB();
+    
+    const server = app.listen(PORT, () => {
+      console.log(`===================================================`);
+      console.log(` Resume Analyzer Server Running in ${process.env.NODE_ENV || 'development'} mode`);
+      console.log(` Local URL: http://localhost:${PORT}`);
+      console.log(`===================================================`);
+    });
+
+    // Graceful shutdown
+    process.on('unhandledRejection', (err) => {
+      console.error(`Unhandled Rejection Error: ${err.message}`);
+      // Close server & exit process
+      server.close(() => process.exit(1));
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
 
 // Graceful shutdown
 process.on('unhandledRejection', (err) => {

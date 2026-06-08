@@ -11,6 +11,7 @@
     "@azure/ai-form-recognizer": "^4.0.0",
     "@azure/functions": "^4.5.0",
     "@azure/identity": "^4.2.0",
+    "@azure/keyvault-secrets": "^4.11.2",
     "@azure/storage-blob": "^12.23.0",
     "dotenv": "^16.4.5",
     "mongoose": "^8.4.1",

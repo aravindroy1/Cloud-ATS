@@ -1,10 +1,11 @@
 const mongoose = require('mongoose');
+const { getSecret } = require('./keyvault');
 
 let isDbConnected = false;
 
 const connectDB = async () => {
   try {
-    const connStr = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/resume-analyzer';
+    const connStr = getSecret('MONGO_URI') || process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/resume-analyzer';
     console.log(`Connecting to MongoDB at: ${connStr.replace(/:[^@/]+@/, ':****@')}`); // hide credentials if present
     
     const conn = await mongoose.connect(connStr, {

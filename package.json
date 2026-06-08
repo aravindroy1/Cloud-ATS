@@ -8,7 +8,9 @@
     "dev": "node server.js"
   },
   "dependencies": {
-    "@azure/identity": "^4.2.0",
+    "@azure/identity": "^4.13.1",
+    "@azure/keyvault-secrets": "^4.11.2",
+    "@azure/msal-node": "^5.2.3",
     "@azure/storage-blob": "^12.23.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
@@ -19,6 +21,7 @@
     "mammoth": "^1.7.2",
     "mongoose": "^8.4.1",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^8.0.10",
     "pdf-parse": "^1.1.1"
   }
 }

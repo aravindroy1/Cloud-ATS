@@ -7,13 +7,15 @@ const nodemailer = require('nodemailer');
 const Resume = require('../models/Resume');
 const User = require('../models/User');
 const { analyzeResume } = require('../utils/atsAnalyzer');
+const { loadSecrets, getSecret } = require('../utils/keyvault');
 
 // Global Mongoose Connection Helper
 const connectDb = async (context) => {
   if (mongoose.connection.readyState === 1) {
     return;
   }
-  const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/resume-analyzer';
+  await loadSecrets(context);
+  const mongoUri = getSecret('MONGO_URI') || process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/resume-analyzer';
   context.log(`Connecting function to MongoDB at: ${mongoUri.replace(/:[^@/]+@/, ':****@')}`);
   await mongoose.connect(mongoUri, {
     serverSelectionTimeoutMS: 15000, // give Cosmos DB enough time to handshake
@@ -24,16 +26,17 @@ const connectDb = async (context) => {
 
 // Nodemailer SMTP Email Helper
 const sendEmailNotification = async (context, email, fullname, filename, score) => {
-  const host = process.env.SMTP_HOST;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  await loadSecrets(context);
+  const host = getSecret('SMTP_HOST') || process.env.SMTP_HOST;
+  const user = getSecret('SMTP_USER') || process.env.SMTP_USER;
+  const pass = getSecret('SMTP_PASS') || process.env.SMTP_PASS;
   
   if (!host || !user || !pass) {
     context.log('SMTP Credentials are not configured. Skipping email notification.');
     return;
   }
 
-  const port = parseInt(process.env.SMTP_PORT || '587');
+  const port = parseInt(getSecret('SMTP_PORT') || process.env.SMTP_PORT || '587');
   const from = process.env.SMTP_FROM || 'no-reply@cloudats.com';
 
   const transporter = nodemailer.createTransport({

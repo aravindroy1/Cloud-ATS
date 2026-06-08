@@ -90,55 +90,17 @@
       </div>
 
       <div class="auth-box">
-        <!-- Auth Navigation Tabs -->
-        <div class="auth-tabs">
-          <button id="tab-login" class="auth-tab active">Log In</button>
-          <button id="tab-register" class="auth-tab">Create Account</button>
+        <!-- Auth Navigation -->
+        <div class="auth-tabs" style="justify-content: center;">
+          <h2>Single Sign-On</h2>
         </div>
 
         <div class="auth-forms">
-          <!-- LOGIN FORM -->
-          <form id="form-login" class="auth-form active">
-            <h2>Welcome Back</h2>
-            <p class="form-desc">Sign in to check your resumes and run new reports</p>
-            <div class="alert-box error" id="login-error" style="display: none;"></div>
-
-            <div class="form-group">
-              <label for="login-email">Email Address</label>
-              <input type="email" id="login-email" required placeholder="you@domain.com">
-            </div>
-
-            <div class="form-group">
-              <label for="login-password">Password</label>
-              <input type="password" id="login-password" required placeholder="••••••••">
-            </div>
-
-            <button type="submit" class="btn btn-primary btn-block">Log In</button>
-          </form>
-
-          <!-- REGISTER FORM -->
-          <form id="form-register" class="auth-form">
-            <h2>Join CloudATS</h2>
-            <p class="form-desc">Create your account to start auditing resumes</p>
-            <div class="alert-box error" id="register-error" style="display: none;"></div>
-
-            <div class="form-group">
-              <label for="reg-fullname">Full Name</label>
-              <input type="text" id="reg-fullname" required placeholder="John Doe">
-            </div>
-
-            <div class="form-group">
-              <label for="reg-email">Email Address</label>
-              <input type="email" id="reg-email" required placeholder="john.doe@domain.com">
-            </div>
-
-            <div class="form-group">
-              <label for="reg-password">Password</label>
-              <input type="password" id="reg-password" required minlength="6" placeholder="At least 6 characters">
-            </div>
-
-            <button type="submit" class="btn btn-primary btn-block">Register Account</button>
-          </form>
+          <!-- LOGIN BUTTON -->
+          <div style="text-align: center; padding: 20px;">
+            <p class="form-desc">Sign in with your Microsoft or Google Account to access CloudATS</p>
+            <a href="/api/auth/login" class="btn btn-primary btn-block" style="text-decoration: none; display: inline-block; margin-top: 20px;">Sign In with Microsoft (Entra ID)</a>
+          </div>
         </div>
       </div>
     </main>

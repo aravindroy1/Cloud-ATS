@@ -1,19 +1,31 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const db = require('../config/db');
+const msal = require('@azure/msal-node');
+const { getSecret } = require('../config/keyvault');
+const { sendEmail } = require('../utils/mailer');
 
-// In-memory data store for fallback mode
-const memoryUsers = [];
+let msalClient = null;
 
-// Middleware to protect routes and verify JWT tokens
+const getMsalClient = () => {
+  if (!msalClient) {
+    const msalConfig = {
+      auth: {
+        clientId: getSecret('AZURE_CLIENT_ID') || process.env.AZURE_CLIENT_ID,
+        authority: `https://login.microsoftonline.com/${getSecret('AZURE_TENANT_ID') || process.env.AZURE_TENANT_ID || 'common'}`,
+        clientSecret: getSecret('AZURE_CLIENT_SECRET') || process.env.AZURE_CLIENT_SECRET,
+      }
+    };
+    msalClient = new msal.ConfidentialClientApplication(msalConfig);
+  }
+  return msalClient;
+};
+
 const protect = async (req, res, next) => {
   let token;
-
-  // Retrieve token from Authorization header or cookies
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     token = req.headers.authorization.split(' ')[1];
   } else if (req.cookies && req.cookies.token) {
@@ -25,23 +37,14 @@ const protect = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!');
+    const jwtSecret = getSecret('JWT_SECRET') || process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!';
+    const decoded = jwt.verify(token, jwtSecret);
     
     if (db.isConnected()) {
       if (!mongoose.isValidObjectId(decoded.id)) {
-        return res.status(401).json({ success: false, message: 'Invalid session token format. Please log in again.' });
+        return res.status(401).json({ success: false, message: 'Invalid session token format.' });
       }
-      req.user = await User.findById(decoded.id).select('-password');
-    } else {
-      // Memory Fallback Search
-      const memUser = memoryUsers.find(u => u._id === decoded.id);
-      if (memUser) {
-        req.user = {
-          _id: memUser._id,
-          fullname: memUser.fullname,
-          email: memUser.email
-        };
-      }
+      req.user = await User.findById(decoded.id);
     }
 
     if (!req.user) {
@@ -54,190 +57,88 @@ const protect = async (req, res, next) => {
   }
 };
 
-// @route   POST /api/auth/register
-// @desc    Register a new user
-// @access  Public
-router.post('/register', async (req, res) => {
-  const { fullname, email, password } = req.body;
+const setAuthCookie = (res, token) => {
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+  });
+};
 
-  if (!fullname || !email || !password) {
-    return res.status(400).json({ success: false, message: 'Please provide all details (fullname, email, password)' });
-  }
-
-  if (password.length < 6) {
-    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long' });
-  }
-
+router.get('/login', async (req, res) => {
   try {
-    const emailLower = email.toLowerCase().trim();
+    const authCodeUrlParameters = {
+      scopes: ["user.read"],
+      redirectUri: process.env.REDIRECT_URI || "http://localhost:8080/api/auth/redirect",
+    };
 
-    if (db.isConnected()) {
-      // Check if user already exists in Mongo
-      const userExists = await User.findOne({ email: emailLower });
-      if (userExists) {
-        return res.status(400).json({ success: false, message: 'User already exists with this email' });
-      }
-
-      // Create user
-      const user = await User.create({
-        fullname,
-        email: emailLower,
-        password
-      });
-
-      // Generate JWT
-      const token = jwt.sign(
-        { id: user._id },
-        process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!',
-        { expiresIn: '30d' }
-      );
-
-      setAuthCookie(res, token);
-
-      return res.status(201).json({
-        success: true,
-        token,
-        user: {
-          id: user._id,
-          fullname: user.fullname,
-          email: user.email
-        }
-      });
-    } else {
-      // Memory Fallback Registration
-      const userExists = memoryUsers.find(u => u.email === emailLower);
-      if (userExists) {
-        return res.status(400).json({ success: false, message: 'User already exists with this email' });
-      }
-
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
-
-      const memUser = {
-        _id: 'mem_usr_' + Math.random().toString(36).substring(2, 11),
-        fullname,
-        email: emailLower,
-        password: hashedPassword,
-        createdAt: new Date()
-      };
-
-      memoryUsers.push(memUser);
-
-      const token = jwt.sign(
-        { id: memUser._id },
-        process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!',
-        { expiresIn: '30d' }
-      );
-
-      setAuthCookie(res, token);
-
-      return res.status(201).json({
-        success: true,
-        token,
-        user: {
-          id: memUser._id,
-          fullname: memUser.fullname,
-          email: memUser.email
-        }
-      });
-    }
+    const client = getMsalClient();
+    const url = await client.getAuthCodeUrl(authCodeUrlParameters);
+    res.redirect(url);
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ success: false, message: 'Server error during registration' });
+    console.error('MSAL Auth URL error:', error);
+    res.status(500).send('Error initiating login');
   }
 });
 
-// @route   POST /api/auth/login
-// @desc    Authenticate user and get token
-// @access  Public
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ success: false, message: 'Please provide email and password' });
-  }
-
+router.get('/redirect', async (req, res) => {
   try {
-    const emailLower = email.toLowerCase().trim();
+    const tokenRequest = {
+      code: req.query.code,
+      scopes: ["user.read"],
+      redirectUri: process.env.REDIRECT_URI || "http://localhost:8080/api/auth/redirect",
+    };
+
+    const client = getMsalClient();
+    const response = await client.acquireTokenByCode(tokenRequest);
+    
+    const account = response.account;
+    const email = account.username;
+    const fullname = account.name;
+
+    let user = null;
+    let isNewUser = false;
 
     if (db.isConnected()) {
-      // Find user by email in Mongo
-      const user = await User.findOne({ email: emailLower });
+      user = await User.findOne({ email: email.toLowerCase() });
       if (!user) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        user = await User.create({
+          fullname,
+          email: email.toLowerCase(),
+          password: 'ENTRA_ID_USER', // Dummy password for Entra ID users
+        });
+        isNewUser = true;
       }
-
-      // Check password
-      const isMatch = await user.matchPassword(password);
-      if (!isMatch) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
-      }
-
-      // Generate JWT
-      const token = jwt.sign(
-        { id: user._id },
-        process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!',
-        { expiresIn: '30d' }
-      );
-
-      setAuthCookie(res, token);
-
-      return res.status(200).json({
-        success: true,
-        token,
-        user: {
-          id: user._id,
-          fullname: user.fullname,
-          email: user.email
-        }
-      });
     } else {
-      // Memory Fallback Login
-      const memUser = memoryUsers.find(u => u.email === emailLower);
-      if (!memUser) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
-      }
-
-      const isMatch = await bcrypt.compare(password, memUser.password);
-      if (!isMatch) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
-      }
-
-      const token = jwt.sign(
-        { id: memUser._id },
-        process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!',
-        { expiresIn: '30d' }
-      );
-
-      setAuthCookie(res, token);
-
-      return res.status(200).json({
-        success: true,
-        token,
-        user: {
-          id: memUser._id,
-          fullname: memUser.fullname,
-          email: memUser.email
-        }
-      });
+      return res.status(500).json({ success: false, message: 'DB not connected' });
     }
+
+    const jwtSecret = getSecret('JWT_SECRET') || process.env.JWT_SECRET || 'supersecretjwtkeyforresumeanalyzer123!';
+    const token = jwt.sign(
+      { id: user._id },
+      jwtSecret,
+      { expiresIn: '30d' }
+    );
+
+    setAuthCookie(res, token);
+
+    if (isNewUser) {
+      await sendEmail(email, 'Welcome to Cloud-ATS', `Hello ${fullname},\n\nWelcome to Cloud-ATS application! Start analyzing your resumes today.`, `<h3>Hello ${fullname},</h3><p>Welcome to Cloud-ATS application! Start analyzing your resumes today.</p>`);
+    }
+
+    // Redirect to frontend dashboard
+    res.redirect('/');
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ success: false, message: 'Server error during login' });
+    console.error('MSAL Redirect error:', error);
+    res.status(500).send('Error during authentication callback');
   }
 });
 
-// @route   POST /api/auth/logout
-// @desc    Log user out / clear cookie
-// @access  Public
 router.post('/logout', (req, res) => {
   res.cookie('token', '', { expires: new Date(0) });
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 });
 
-// @route   GET /api/auth/me
-// @desc    Get current user profile
-// @access  Private
 router.get('/me', protect, (req, res) => {
   res.status(200).json({
     success: true,
@@ -248,15 +149,6 @@ router.get('/me', protect, (req, res) => {
     }
   });
 });
-
-// Helper to set cookie
-const setAuthCookie = (res, token) => {
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-  });
-};
 
 module.exports = {
   router,
